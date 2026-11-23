@@ -5,6 +5,7 @@ import {
   Compass,
   Crown,
   Flame,
+  Globe,
   Lock,
   Palette,
   RotateCcw,
@@ -46,6 +47,8 @@ function renderIcon(icon: AchievementDef['icon'], unlocked: boolean) {
       return <Target className={cls} />;
     case 'crown':
       return <Crown className={cls} />;
+    case 'globe':
+      return <Globe className={cls} />;
   }
 }
 

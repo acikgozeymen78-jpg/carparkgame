@@ -71,6 +71,20 @@ export const ACHIEVEMENTS: AchievementDef[] = [
     icon: 'target',
     points: 450,
   },
+  {
+    id: 'real_world_park',
+    title: 'Gerçek Dünya Kaşifi',
+    description: 'Gerçek Dünya Modu\'nda bir sokak labirentini başarıyla park et.',
+    icon: 'globe',
+    points: 300,
+  },
+  {
+    id: 'token_hunter',
+    title: 'Hazine Avcısı',
+    description: 'Bir parkurdaki tüm yıldız ve süre kristallerini topla.',
+    icon: 'star',
+    points: 250,
+  },
 ];
 
 export function evaluateRunAchievements(
@@ -99,6 +113,12 @@ export function evaluateRunAchievements(
   if (progress.cleanParks + (run.collisions === 0 ? 1 : 0) >= 5) {
     grant('veteran_driver');
   }
+  if (run.isRealWorld) {
+    grant('real_world_park');
+  }
+  if ((run.totalTokens ?? 0) > 0 && run.tokensCollected === run.totalTokens) {
+    grant('token_hunter');
+  }
 
   return newlyUnlocked;
 }
@@ -110,6 +130,8 @@ export function calculateRunScore(params: {
   collisions: number;
   tierMultiplier: number;
   reverseParked: boolean;
+  penaltyScore?: number;
+  violationCount?: number;
 }): { score: number; stars: number } {
   const base = 600 + params.levelNumber * 220;
   const timeBonus = Math.max(0, Math.round((params.parTime * 1.35 - params.elapsedTime) * 35));
@@ -117,11 +139,13 @@ export function calculateRunScore(params: {
   const reverseBonus = params.reverseParked ? 180 : 0;
 
   const raw = (base + timeBonus + cleanBonus + reverseBonus) * params.tierMultiplier;
-  const score = Math.max(100, Math.round(raw));
+  const penalty = Math.max(0, params.penaltyScore ?? 0);
+  const violations = Math.max(0, params.violationCount ?? 0);
+  const score = penalty > 0 ? Math.max(0, Math.round(raw) - penalty) : Math.max(100, Math.round(raw));
 
   let stars = 1;
-  if (params.elapsedTime <= params.parTime * 1.15 && params.collisions <= 1) stars = 2;
-  if (params.elapsedTime <= params.parTime * 0.92 && params.collisions === 0) stars = 3;
+  if (params.elapsedTime <= params.parTime * 1.15 && params.collisions <= 1 && violations <= 1) stars = 2;
+  if (params.elapsedTime <= params.parTime * 0.92 && params.collisions === 0 && violations === 0) stars = 3;
 
   return { score, stars };
 }

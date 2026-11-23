@@ -11,6 +11,7 @@ const DIFFICULTY_KEY = 'labirent_park_3d_difficulty_v1';
 
 export function getDefaultCustomization(): VehicleCustomization {
   return {
+    model: 'sport_gt',
     paint: 'crimson',
     rim: 'sport5',
     spoiler: 'lip',
@@ -27,6 +28,7 @@ export function getDefaultProgress(): PlayerProgress {
     totalParks: 0,
     cleanParks: 0,
     reverseParks: 0,
+    realWorldParks: 0,
     unlockedAchievements: [],
     levelBestScores: {},
     levelBestTimes: {},

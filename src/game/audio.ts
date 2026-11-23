@@ -71,17 +71,22 @@ export class SoundEngine {
     }
   }
 
-  public updateEngine(speedAbs: number, accelerating: boolean, active: boolean): void {
+  public updateEngine(
+    speedAbs: number,
+    accelerating: boolean,
+    active: boolean,
+    turboActive = false,
+  ): void {
     if (!this.ctx || !this.engineOsc || !this.engineFilter || !this.engineGain) return;
     const now = this.ctx.currentTime;
     if (this.muted || !active) {
       this.engineGain.gain.setTargetAtTime(0, now, 0.06);
       return;
     }
-    const normSpeed = Math.min(1, speedAbs / 18);
-    const freq = 52 + normSpeed * 95 + (accelerating ? 16 : 0);
-    const cutoff = 160 + normSpeed * 380 + (accelerating ? 140 : 0);
-    const vol = 0.02 + normSpeed * 0.025 + (accelerating ? 0.012 : 0);
+    const normSpeed = Math.min(1, speedAbs / 20);
+    const freq = 52 + normSpeed * 95 + (accelerating ? 16 : 0) + (turboActive ? 38 : 0);
+    const cutoff = 160 + normSpeed * 380 + (accelerating ? 140 : 0) + (turboActive ? 260 : 0);
+    const vol = 0.02 + normSpeed * 0.025 + (accelerating ? 0.012 : 0) + (turboActive ? 0.014 : 0);
 
     this.engineOsc.frequency.setTargetAtTime(freq, now, 0.06);
     this.engineFilter.frequency.setTargetAtTime(cutoff, now, 0.06);
@@ -109,10 +114,20 @@ export class SoundEngine {
     osc.stop(now + 0.19);
   }
 
-  public playParkingSensor(distanceToBay: number, inside: boolean): void {
-    if (this.muted || distanceToBay > 8.5) return;
+  public playParkingSensor(
+    closestObstacleDist: number,
+    insideBay: boolean,
+    isMoving: boolean,
+  ): void {
+    const activeThreshold = insideBay ? 8.0 : isMoving ? 2.4 : 1.1;
+    if (this.muted || closestObstacleDist > activeThreshold) return;
     const nowMs = performance.now();
-    const interval = inside ? 160 : Math.max(210, distanceToBay * 85);
+    const interval =
+      closestObstacleDist < 0.65
+        ? 110
+        : insideBay
+          ? 165
+          : Math.max(145, closestObstacleDist * 140);
     if (nowMs - this.lastBeepTime < interval) return;
     this.lastBeepTime = nowMs;
 
@@ -123,14 +138,70 @@ export class SoundEngine {
     const gain = ctx.createGain();
 
     osc.type = 'sine';
-    osc.frequency.value = inside ? 1046 : 740;
-    gain.gain.setValueAtTime(0.045, now);
-    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.075);
+    osc.frequency.value =
+      closestObstacleDist < 0.65 ? 1240 : insideBay ? 1046 : 820;
+    gain.gain.setValueAtTime(0.04, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.065);
 
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start(now);
-    osc.stop(now + 0.08);
+    osc.stop(now + 0.07);
+  }
+
+  public playTokenPickup(kind: 'star' | 'time'): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const notes = kind === 'star' ? [659.25, 987.77] : [587.33, 880, 1174.66];
+    notes.forEach((freq, idx) => {
+      const t = ctx.currentTime + idx * 0.055;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.085, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.2);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.21);
+    });
+  }
+
+  public playBoostPad(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const now = ctx.currentTime;
+    const osc = ctx.createOscillator();
+    const gain = ctx.createGain();
+    osc.type = 'sawtooth';
+    osc.frequency.setValueAtTime(220, now);
+    osc.frequency.exponentialRampToValueAtTime(880, now + 0.22);
+    gain.gain.setValueAtTime(0.075, now);
+    gain.gain.exponentialRampToValueAtTime(0.001, now + 0.26);
+    osc.connect(gain);
+    gain.connect(ctx.destination);
+    osc.start(now);
+    osc.stop(now + 0.27);
+  }
+
+  public playCheckpoint(combo: number): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const base = 523.25 * Math.pow(1.08, Math.max(0, combo - 1));
+    [base, base * 1.25].forEach((freq, idx) => {
+      const t = ctx.currentTime + idx * 0.06;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'triangle';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.085, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.24);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.25);
+    });
   }
 
   public playAchievement(): void {
@@ -168,6 +239,48 @@ export class SoundEngine {
       gain.connect(ctx.destination);
       osc.start(t);
       osc.stop(t + 0.5);
+    });
+  }
+
+  public playTrafficViolation(severity: 'light' | 'medium' | 'severe'): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    const notes =
+      severity === 'severe'
+        ? [980, 740, 1120]
+        : severity === 'medium'
+          ? [860, 620]
+          : [720];
+    notes.forEach((freq, idx) => {
+      const t = ctx.currentTime + idx * 0.08;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = severity === 'severe' ? 'sawtooth' : 'square';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(severity === 'severe' ? 0.07 : 0.045, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.12);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.13);
+    });
+  }
+
+  public playTrafficBonus(): void {
+    const ctx = this.ensureContext();
+    if (!ctx) return;
+    [587.33, 783.99].forEach((freq, idx) => {
+      const t = ctx.currentTime + idx * 0.07;
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.type = 'sine';
+      osc.frequency.value = freq;
+      gain.gain.setValueAtTime(0.065, t);
+      gain.gain.exponentialRampToValueAtTime(0.001, t + 0.18);
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.start(t);
+      osc.stop(t + 0.19);
     });
   }
 

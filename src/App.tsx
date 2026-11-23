@@ -1,9 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type {
   AchievementDef,
+  ArenaTheme,
   CameraMode,
   DifficultyPreference,
   GamePhase,
+  LevelConfig,
+  MapDesignPreference,
   OverlayScreen,
   RunResult,
   VehicleCustomization,
@@ -32,12 +35,14 @@ import {
   ThreeGameEngine,
   type HudTelemetry,
 } from './game/ThreeGameEngine';
+import { resolveVehicleModel } from './game/vehicles';
 import { TitleOverlay } from './components/TitleOverlay';
 import { HudOverlay } from './components/HudOverlay';
 import { GarageDock } from './components/GarageDock';
 import { LeaderboardModal } from './components/LeaderboardModal';
 import { AchievementsModal } from './components/AchievementsModal';
 import { GameModal } from './components/GameModal';
+import { RealWorldModal } from './components/RealWorldModal';
 
 const INITIAL_TELEMETRY: HudTelemetry = {
   speedKmh: 0,
@@ -49,6 +54,44 @@ const INITIAL_TELEMETRY: HudTelemetry = {
   parkQuality: 0,
   distanceToBay: 25,
   gear: 'N',
+  turboEnergy: 100,
+  turboActive: false,
+  boostPadActive: false,
+  isDrifting: false,
+  comboCount: 1,
+  checkpointsPassed: 0,
+  totalCheckpoints: 0,
+  passedCheckpointIds: [],
+  gridSizeLabel: '3×3',
+  headlightsOn: true,
+  tokensCollected: 0,
+  totalTokens: 0,
+  bonusScore: 0,
+  bonusTimeSec: 0,
+  steerAngle: 0,
+  ultrasonic: {
+    front: 6,
+    rear: 6,
+    left: 6,
+    right: 6,
+    minDistance: 6,
+  },
+  playerPose: { x: 0, z: 0, yaw: 0 },
+  nearestWalls: [],
+  collectedTokenIds: [],
+  archetype: 'classic_maze',
+  penaltyScore: 0,
+  penaltyTimeSec: 0,
+  penaltyPoints: 0,
+  maxPenaltyPoints: 100,
+  violationCount: 0,
+  approachingSignal: null,
+  activeTrafficAlert: null,
+  edsFlashActive: false,
+  vehicleModel: 'sport_gt',
+  hoverY: 0,
+  hoverEnergy: 100,
+  hoverActive: false,
 };
 
 export default function App() {
@@ -57,11 +100,28 @@ export default function App() {
   const soundRef = useRef<SoundEngine | null>(null);
 
   const [progress, setProgress] = useState(() => loadProgress());
-  const [customization, setCustomization] = useState(() => loadCustomization());
+  const [customization, setCustomization] = useState<VehicleCustomization>(() => {
+    const base = loadCustomization();
+    const paramVeh = new URLSearchParams(window.location.search).get('vehicle');
+    if (
+      paramVeh === 'sport_gt' ||
+      paramVeh === 'drift_pro' ||
+      paramVeh === 'hover_thruster' ||
+      paramVeh === 'apex_hyper'
+    ) {
+      return { ...base, model: paramVeh };
+    }
+    return base;
+  });
   const [difficulty, setDifficulty] = useState(() => loadDifficultyState());
-  const [selectedLevel, setSelectedLevel] = useState<number>(() =>
-    Math.max(1, loadProgress().highestLevel),
-  );
+  const [selectedLevel, setSelectedLevel] = useState<number>(() => {
+    const params = new URLSearchParams(window.location.search);
+    const paramLevel = Number(params.get('level'));
+    if (Number.isInteger(paramLevel) && paramLevel >= 1 && paramLevel <= 50) {
+      return paramLevel;
+    }
+    return Math.max(1, loadProgress().highestLevel);
+  });
 
   const [phase, setPhase] = useState<GamePhase>(() => {
     const params = new URLSearchParams(window.location.search);
@@ -69,16 +129,36 @@ export default function App() {
   });
   const [overlay, setOverlay] = useState<OverlayScreen>('none');
   const [cameraMode, setCameraMode] = useState<CameraMode>('chase');
+  const [arenaTheme, setArenaTheme] = useState<ArenaTheme>('night');
   const [muted, setMuted] = useState(false);
   const [telemetry, setTelemetry] = useState<HudTelemetry>(INITIAL_TELEMETRY);
   const [lastRun, setLastRun] = useState<RunResult | null>(null);
   const [toastAchievement, setToastAchievement] = useState<AchievementDef | null>(null);
+  const [realWorldLevel, setRealWorldLevel] = useState<LevelConfig | null>(null);
+  const [mapDesignPref, setMapDesignPref] = useState<MapDesignPreference>(() => {
+    const paramMap = new URLSearchParams(window.location.search).get('map');
+    if (
+      paramMap === 'auto' ||
+      paramMap === 'classic_maze' ||
+      paramMap === 'slalom_chicane' ||
+      paramMap === 'double_roundabout' ||
+      paramMap === 'construction_zone' ||
+      paramMap === 'twin_avenue' ||
+      paramMap === 'spiral_citadel' ||
+      paramMap === 'grand_prix_arena'
+    ) {
+      return paramMap;
+    }
+    return 'auto';
+  });
+  const toastTimerRef = useRef<number | null>(null);
 
   const activeTier = useMemo(() => resolveActiveTier(difficulty), [difficulty]);
-  const activeLevelConfig = useMemo(
-    () => generateLabyrinthLevel(selectedLevel, activeTier),
-    [selectedLevel, activeTier],
+  const campaignLevelConfig = useMemo(
+    () => generateLabyrinthLevel(selectedLevel, activeTier, mapDesignPref),
+    [selectedLevel, activeTier, mapDesignPref],
   );
+  const activeLevelConfig = realWorldLevel ?? campaignLevelConfig;
 
   // Refs for stable access inside engine callbacks
   const stateRef = useRef({
@@ -86,7 +166,9 @@ export default function App() {
     overlay,
     selectedLevel,
     activeTier,
+    mapDesignPref,
     activeLevelConfig,
+    customization,
     progress,
     difficulty,
   });
@@ -95,7 +177,9 @@ export default function App() {
     overlay,
     selectedLevel,
     activeTier,
+    mapDesignPref,
     activeLevelConfig,
+    customization,
     progress,
     difficulty,
   };
@@ -105,12 +189,23 @@ export default function App() {
     document.body.dataset.state = phase;
   }, [phase]);
 
+  useEffect(() => {
+    return () => {
+      if (toastTimerRef.current !== null) {
+        window.clearTimeout(toastTimerRef.current);
+      }
+    };
+  }, []);
+
   const showToast = useCallback((achId: string) => {
     const found = ACHIEVEMENTS.find((a) => a.id === achId);
     if (!found) return;
     setToastAchievement(found);
     soundRef.current?.playAchievement();
-    window.setTimeout(() => {
+    if (toastTimerRef.current !== null) {
+      window.clearTimeout(toastTimerRef.current);
+    }
+    toastTimerRef.current = window.setTimeout(() => {
       setToastAchievement((curr) => (curr?.id === found.id ? null : curr));
     }, 3400);
   }, []);
@@ -118,10 +213,18 @@ export default function App() {
   const handleRunFinish = useCallback(
     (outcome: {
       victory: boolean;
-      reason: 'parked' | 'wrecked' | 'timeout';
+      reason: 'parked' | 'wrecked' | 'timeout' | 'penalty_limit';
       elapsedTime: number;
       collisions: number;
       reverseParked: boolean;
+      tokensCollected: number;
+      totalTokens: number;
+      bonusScore: number;
+      penaltyScore: number;
+      penaltyTimeSec: number;
+      penaltyPoints: number;
+      violationCount: number;
+      penalties: import('./types/game').TrafficPenaltyRecord[];
     }) => {
       const snap = stateRef.current;
       const lvl = snap.activeLevelConfig;
@@ -147,11 +250,14 @@ export default function App() {
           collisions: outcome.collisions,
           tierMultiplier: TIER_MULTIPLIERS[lvl.tier],
           reverseParked: outcome.reverseParked,
+          penaltyScore: outcome.penaltyScore,
+          violationCount: outcome.violationCount,
         });
-        score = calc.score;
+        score = Math.max(0, calc.score + (outcome.bonusScore ?? 0));
         stars = calc.stars;
       }
 
+      const isRealWorld = Boolean(lvl.realWorld);
       const runResult: RunResult = {
         victory: outcome.victory,
         reason: outcome.reason,
@@ -166,6 +272,16 @@ export default function App() {
         difficultyShift: nextDiff.lastShift,
         newTier: nextDiff.activeTier,
         newlyUnlockedAchievements: [],
+        isRealWorld,
+        realWorldStreetName: lvl.realWorld?.streetName,
+        tokensCollected: outcome.tokensCollected,
+        totalTokens: outcome.totalTokens,
+        bonusScore: outcome.bonusScore,
+        penaltyScore: outcome.penaltyScore,
+        penaltyTimeSec: outcome.penaltyTimeSec,
+        penaltyPoints: outcome.penaltyPoints,
+        violationCount: outcome.violationCount,
+        penalties: outcome.penalties,
       };
 
       const newlyUnlocked = evaluateRunAchievements(prevProg, runResult);
@@ -181,22 +297,29 @@ export default function App() {
 
         const nextProg = {
           ...prevProg,
-          highestLevel: Math.max(prevProg.highestLevel, lvl.levelNumber + 1),
+          highestLevel: isRealWorld
+            ? prevProg.highestLevel
+            : Math.max(prevProg.highestLevel, lvl.levelNumber + 1),
           totalScore: prevProg.totalScore + score + achPoints,
           totalParks: prevProg.totalParks + 1,
           cleanParks: prevProg.cleanParks + (outcome.collisions === 0 ? 1 : 0),
           reverseParks: prevProg.reverseParks + (outcome.reverseParked ? 1 : 0),
+          realWorldParks: (prevProg.realWorldParks ?? 0) + (isRealWorld ? 1 : 0),
           unlockedAchievements: Array.from(
             new Set([...prevProg.unlockedAchievements, ...newlyUnlocked]),
           ),
-          levelBestScores: {
-            ...prevProg.levelBestScores,
-            [lvl.levelNumber]: Math.max(prevBestLvlScore, score),
-          },
-          levelBestTimes: {
-            ...prevProg.levelBestTimes,
-            [lvl.levelNumber]: Math.min(prevBestLvlTime, outcome.elapsedTime),
-          },
+          levelBestScores: isRealWorld
+            ? prevProg.levelBestScores
+            : {
+                ...prevProg.levelBestScores,
+                [lvl.levelNumber]: Math.max(prevBestLvlScore, score),
+              },
+          levelBestTimes: isRealWorld
+            ? prevProg.levelBestTimes
+            : {
+                ...prevProg.levelBestTimes,
+                [lvl.levelNumber]: Math.min(prevBestLvlTime, outcome.elapsedTime),
+              },
         };
         setProgress(nextProg);
         saveProgress(nextProg);
@@ -223,7 +346,7 @@ export default function App() {
     const engine = new ThreeGameEngine(
       mount,
       stateRef.current.activeLevelConfig,
-      loadCustomization(),
+      stateRef.current.customization,
       sound,
       {
         onTelemetry: (t) => setTelemetry(t),
@@ -263,7 +386,12 @@ export default function App() {
         : stateRef.current.difficulty;
 
       const tier = resolveActiveTier(nextDiff);
-      const cfg = generateLabyrinthLevel(levelNum, tier);
+      const cfg = generateLabyrinthLevel(
+        levelNum,
+        tier,
+        stateRef.current.mapDesignPref,
+      );
+      setRealWorldLevel(null);
       setSelectedLevel(levelNum);
       setLastRun(null);
       setOverlay('none');
@@ -274,10 +402,35 @@ export default function App() {
     [],
   );
 
+  const launchRealWorldLevel = useCallback((cfg: LevelConfig) => {
+    if (document.activeElement instanceof HTMLElement) {
+      document.activeElement.blur();
+    }
+    soundRef.current?.playClick();
+    setRealWorldLevel(cfg);
+    setLastRun(null);
+    setOverlay('none');
+    setPhase('playing');
+    engineRef.current?.loadLevel(cfg);
+    engineRef.current?.setPhase('playing', 'none');
+  }, []);
+
+  const restartActiveLevel = useCallback(() => {
+    const rw = stateRef.current.activeLevelConfig.realWorld
+      ? stateRef.current.activeLevelConfig
+      : null;
+    if (rw) {
+      launchRealWorldLevel(rw);
+    } else {
+      startLevel(stateRef.current.selectedLevel);
+    }
+  }, [launchRealWorldLevel, startLevel]);
+
   const handleSelectLevel = (lvl: number) => {
     soundRef.current?.playClick();
+    setRealWorldLevel(null);
     setSelectedLevel(lvl);
-    const cfg = generateLabyrinthLevel(lvl, activeTier);
+    const cfg = generateLabyrinthLevel(lvl, activeTier, mapDesignPref);
     engineRef.current?.loadLevel(cfg);
   };
 
@@ -293,7 +446,19 @@ export default function App() {
     };
     setDifficulty(updated);
     saveDifficultyState(updated);
-    const cfg = generateLabyrinthLevel(selectedLevel, updated.activeTier);
+    const cfg = generateLabyrinthLevel(
+      selectedLevel,
+      updated.activeTier,
+      mapDesignPref,
+    );
+    engineRef.current?.loadLevel(cfg);
+  };
+
+  const handleChangeMapDesignPref = (pref: MapDesignPreference) => {
+    soundRef.current?.playClick();
+    setRealWorldLevel(null);
+    setMapDesignPref(pref);
+    const cfg = generateLabyrinthLevel(selectedLevel, activeTier, pref);
     engineRef.current?.loadLevel(cfg);
   };
 
@@ -351,13 +516,33 @@ export default function App() {
     setCameraMode(next);
   }, []);
 
+  const handleToggleCockpit = useCallback(() => {
+    if (!engineRef.current) return;
+    soundRef.current?.playClick();
+    const next = engineRef.current.toggleCockpitMode();
+    setCameraMode(next);
+  }, []);
+
+  const handleCycleTheme = useCallback(() => {
+    if (!engineRef.current) return;
+    soundRef.current?.playClick();
+    const next = engineRef.current.cycleTheme();
+    setArenaTheme(next);
+  }, []);
+
+  const handleToggleHeadlights = useCallback(() => {
+    if (!engineRef.current) return;
+    soundRef.current?.playClick();
+    engineRef.current.toggleHeadlights();
+  }, []);
+
   const handleToggleMute = useCallback(() => {
     if (!soundRef.current) return;
     const nextMuted = soundRef.current.toggleMute();
     setMuted(nextMuted);
   }, []);
 
-  // Global keyboard shortcuts (Enter/Space on Title, Esc/P Pause, C Camera, R Restart, M Mute)
+  // Global keyboard shortcuts (Enter/Space on Title, Esc/P Pause, C Camera, T Atmosphere, R Restart, M Mute)
   useEffect(() => {
     const onKeyDown = (e: KeyboardEvent) => {
       const activeTag = document.activeElement?.tagName;
@@ -392,8 +577,14 @@ export default function App() {
       if (curPhase === 'playing' && curOverlay === 'none') {
         if (e.code === 'KeyC') {
           handleCycleCamera();
+        } else if (e.code === 'KeyV') {
+          handleToggleCockpit();
+        } else if (e.code === 'KeyT') {
+          handleCycleTheme();
+        } else if (e.code === 'KeyF') {
+          handleToggleHeadlights();
         } else if (e.code === 'KeyR') {
-          startLevel(stateRef.current.selectedLevel);
+          restartActiveLevel();
         } else if (e.code === 'KeyM') {
           handleToggleMute();
         }
@@ -402,7 +593,17 @@ export default function App() {
 
     window.addEventListener('keydown', onKeyDown);
     return () => window.removeEventListener('keydown', onKeyDown);
-  }, [handleCycleCamera, handlePause, handleResume, handleToggleMute, startLevel]);
+  }, [
+    handleCycleCamera,
+    handleToggleCockpit,
+    handleCycleTheme,
+    handleToggleHeadlights,
+    handlePause,
+    handleResume,
+    handleToggleMute,
+    restartActiveLevel,
+    startLevel,
+  ]);
 
   return (
     <div className="relative w-screen h-screen overflow-hidden bg-[#0b101b]">
@@ -418,14 +619,25 @@ export default function App() {
         <TitleOverlay
           selectedLevel={selectedLevel}
           highestLevel={progress.highestLevel}
+          gridSizeLabel={`${campaignLevelConfig.cols}×${campaignLevelConfig.rows}`}
+          selectedModel={resolveVehicleModel(customization.model)}
           difficulty={difficulty}
+          mapDesignPref={mapDesignPref}
           progress={progress}
           onSelectLevel={handleSelectLevel}
+          onSelectVehicleModel={(model) =>
+            handleUpdateCustomization({ ...customization, model })
+          }
           onChangeDifficultyPref={handleChangeDifficultyPref}
+          onChangeMapDesignPref={handleChangeMapDesignPref}
           onStart={() => startLevel(selectedLevel)}
           onOpenGarage={openGarage}
           onOpenLeaderboard={() => setOverlay('leaderboard')}
           onOpenAchievements={() => setOverlay('achievements')}
+          onOpenRealWorld={() => {
+            soundRef.current?.playClick();
+            setOverlay('realworld');
+          }}
         />
       )}
 
@@ -433,16 +645,25 @@ export default function App() {
       {phase === 'playing' && overlay === 'none' && (
         <HudOverlay
           levelNumber={selectedLevel}
+          levelConfig={activeLevelConfig}
+          realWorldStreetName={activeLevelConfig.realWorld?.streetName}
           tier={activeTier}
           parTime={activeLevelConfig.parTime}
           telemetry={telemetry}
           cameraMode={cameraMode}
+          arenaTheme={arenaTheme}
           muted={muted}
           toastAchievement={toastAchievement}
           onCycleCamera={handleCycleCamera}
+          onToggleCockpit={handleToggleCockpit}
+          onCycleTheme={handleCycleTheme}
+          onToggleHeadlights={handleToggleHeadlights}
           onToggleMute={handleToggleMute}
-          onRestart={() => startLevel(selectedLevel)}
+          onRestart={restartActiveLevel}
           onPause={handlePause}
+          onRearCameraRectChange={(rect) =>
+            engineRef.current?.setRearCameraRect(rect)
+          }
           onTouchControl={(key, pressed) =>
             engineRef.current?.setTouchControl(key, pressed)
           }
@@ -478,21 +699,36 @@ export default function App() {
         <AchievementsModal progress={progress} onClose={closeOverlay} />
       )}
 
+      {/* Real World Google Maps Street Picker & Generator */}
+      {overlay === 'realworld' && (
+        <RealWorldModal
+          activeTier={activeTier}
+          onLaunchLevel={launchRealWorldLevel}
+          onClose={closeOverlay}
+        />
+      )}
+
       {/* Pause / Victory / Game Over Modal */}
       {(phase === 'paused' || phase === 'gameover') && overlay === 'none' && (
         <GameModal
           phase={phase}
           levelNumber={selectedLevel}
+          realWorldStreetName={activeLevelConfig.realWorld?.streetName}
           lastRun={lastRun}
           onResume={handleResume}
-          onRetry={() => startLevel(selectedLevel)}
+          onRetry={restartActiveLevel}
           onNextLevel={() => startLevel(selectedLevel + 1)}
+          onPickNewStreet={() => {
+            soundRef.current?.playClick();
+            setOverlay('realworld');
+          }}
           onOpenGarage={openGarage}
           onReturnTitle={() => {
             soundRef.current?.playClick();
+            setRealWorldLevel(null);
             setOverlay('none');
             setPhase('title');
-            engineRef.current?.loadLevel(activeLevelConfig);
+            engineRef.current?.loadLevel(campaignLevelConfig);
             engineRef.current?.setPhase('title', 'none');
           }}
         />

@@ -7,6 +7,7 @@ import type {
   SpoilerStyleId,
   UnderglowColorId,
   VehicleCustomization,
+  VehicleModelId,
 } from '../types/game';
 import {
   DECAL_LABELS,
@@ -15,6 +16,7 @@ import {
   SPOILER_LABELS,
   UNDERGLOW_PRESETS,
 } from '../game/carBuilder';
+import { VEHICLE_ORDER, VEHICLE_SPECS, resolveVehicleModel } from '../game/vehicles';
 
 interface GarageDockProps {
   customization: VehicleCustomization;
@@ -22,9 +24,10 @@ interface GarageDockProps {
   onClose: () => void;
 }
 
-type GarageTab = 'paint' | 'rim' | 'spoiler' | 'underglow' | 'decal';
+type GarageTab = 'model' | 'paint' | 'rim' | 'spoiler' | 'underglow' | 'decal';
 
 const TABS: Array<{ id: GarageTab; label: string }> = [
+  { id: 'model', label: 'Araç Tipi' },
   { id: 'paint', label: 'Boya' },
   { id: 'rim', label: 'Jant' },
   { id: 'spoiler', label: 'Kanat' },
@@ -37,8 +40,9 @@ export const GarageDock: React.FC<GarageDockProps> = ({
   onChange,
   onClose,
 }) => {
-  const [activeTab, setActiveTab] = useState<GarageTab>('paint');
+  const [activeTab, setActiveTab] = useState<GarageTab>('model');
   const [collapsed, setCollapsed] = useState(false);
+  const currentModel: VehicleModelId = resolveVehicleModel(customization.model);
 
   return (
     <>
@@ -91,8 +95,9 @@ export const GarageDock: React.FC<GarageDockProps> = ({
               <button
                 key={t.id}
                 type="button"
+                data-garage-tab={t.id}
                 onClick={() => setActiveTab(t.id)}
-                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider border transition-colors cursor-pointer ${
+                className={`px-3.5 py-1.5 rounded-lg text-xs font-bold uppercase tracking-wider border transition-colors cursor-pointer whitespace-nowrap ${
                   activeTab === t.id
                     ? 'bg-emerald-500 text-slate-950 border-emerald-300'
                     : 'bg-slate-800/80 text-slate-300 border-slate-700 hover:border-slate-500'
@@ -105,6 +110,47 @@ export const GarageDock: React.FC<GarageDockProps> = ({
 
           {/* Options Row */}
           <div className="flex flex-wrap items-center gap-2.5">
+            {activeTab === 'model' &&
+              VEHICLE_ORDER.map((id) => {
+                const spec = VEHICLE_SPECS[id];
+                const selected = currentModel === id;
+                return (
+                  <button
+                    key={id}
+                    type="button"
+                    data-garage-model={id}
+                    onClick={() => onChange({ ...customization, model: id })}
+                    className={`flex-1 min-w-[185px] text-left px-3 py-2.5 rounded-xl border transition-colors cursor-pointer ${
+                      selected
+                        ? 'bg-emerald-500/18 border-emerald-400 text-white'
+                        : 'bg-slate-900/85 border-slate-700 text-slate-300 hover:border-slate-500'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2 mb-1">
+                      <span className="text-xs font-extrabold text-white">
+                        {spec.name}
+                      </span>
+                      <span
+                        className={`text-[10px] font-bold px-1.5 py-0.5 rounded ${
+                          id === 'hover_thruster'
+                            ? 'bg-cyan-500/20 text-cyan-300'
+                            : id === 'drift_pro'
+                              ? 'bg-amber-500/20 text-amber-300'
+                              : id === 'apex_hyper'
+                                ? 'bg-rose-500/20 text-rose-300'
+                                : 'bg-emerald-500/20 text-emerald-300'
+                        }`}
+                      >
+                        {spec.badge}
+                      </span>
+                    </div>
+                    <p className="text-[11px] text-slate-400 leading-snug">
+                      {spec.tagline}
+                    </p>
+                  </button>
+                );
+              })}
+
             {activeTab === 'paint' &&
               (Object.keys(PAINT_PRESETS) as PaintFinishId[]).map((id) => {
                 const preset = PAINT_PRESETS[id];

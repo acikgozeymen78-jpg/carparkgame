@@ -1,5 +1,6 @@
 import React from 'react';
 import {
+  AlertTriangle,
   ArrowRight,
   Award,
   Car,
@@ -17,10 +18,12 @@ import { ACHIEVEMENTS } from '../game/achievements';
 interface GameModalProps {
   phase: GamePhase;
   levelNumber: number;
+  realWorldStreetName?: string;
   lastRun: RunResult | null;
   onResume: () => void;
   onRetry: () => void;
   onNextLevel: () => void;
+  onPickNewStreet?: () => void;
   onOpenGarage: () => void;
   onReturnTitle: () => void;
 }
@@ -28,10 +31,12 @@ interface GameModalProps {
 export const GameModal: React.FC<GameModalProps> = ({
   phase,
   levelNumber,
+  realWorldStreetName,
   lastRun,
   onResume,
   onRetry,
   onNextLevel,
+  onPickNewStreet,
   onOpenGarage,
   onReturnTitle,
 }) => {
@@ -46,8 +51,8 @@ export const GameModal: React.FC<GameModalProps> = ({
         aria-label="Oyun Duraklatıldı"
       >
         <div className="w-full max-w-sm bg-[#0d1424] border border-slate-700 rounded-2xl p-6 shadow-2xl text-center">
-          <div className="text-xs uppercase tracking-[0.2em] text-amber-400 font-bold mb-1">
-            SEVİYE {levelNumber}
+          <div className="text-xs uppercase tracking-[0.2em] text-amber-400 font-bold mb-1 truncate">
+            {realWorldStreetName ? `GERÇEK SOKAK · ${realWorldStreetName}` : `SEVİYE ${levelNumber}`}
           </div>
           <h2 className="text-2xl font-bold text-white mb-6">Oyun Duraklatıldı</h2>
 
@@ -109,15 +114,24 @@ export const GameModal: React.FC<GameModalProps> = ({
               isVictory ? 'text-emerald-400' : 'text-rose-400'
             }`}
           >
-            SEVİYE {lastRun.levelNumber} · {TIER_LABELS[lastRun.tier]}
+            {lastRun.isRealWorld
+              ? `${lastRun.realWorldStreetName ?? 'Gerçek Sokak'} · ${TIER_LABELS[lastRun.tier]}`
+              : `SEVİYE ${lastRun.levelNumber} · ${TIER_LABELS[lastRun.tier]}`}
           </div>
           <h2 className="text-3xl font-extrabold text-white">
             {isVictory
               ? 'KUSURSUZ PARK!'
-              : lastRun.reason === 'wrecked'
-                ? 'ARAÇ HASAR ALDI'
-                : 'SÜRE DOLDU'}
+              : lastRun.reason === 'penalty_limit'
+                ? 'CEZA LİMİTİ AŞILDI'
+                : lastRun.reason === 'wrecked'
+                  ? 'ARAÇ HASAR ALDI'
+                  : 'SÜRE DOLDU'}
           </h2>
+          {lastRun.reason === 'penalty_limit' && (
+            <p className="text-xs text-rose-300 mt-1">
+              100 ceza puanı dolduğu için sürüş sonlandırıldı.
+            </p>
+          )}
 
           {/* Star Rating */}
           {isVictory && (
@@ -163,6 +177,42 @@ export const GameModal: React.FC<GameModalProps> = ({
             </div>
           </div>
         </div>
+
+        {(lastRun.totalTokens ?? 0) > 0 && (
+          <div className="mb-3 rounded-xl px-3.5 py-2 border border-amber-500/35 bg-amber-500/10 flex items-center justify-between text-xs font-semibold text-amber-200">
+            <span className="inline-flex items-center gap-1.5">
+              <Star className="w-3.5 h-3.5 text-amber-400 fill-amber-400" />
+              <span>Toplanan Kristal &amp; Yıldız</span>
+            </span>
+            <span className="font-mono-num">
+              {lastRun.tokensCollected ?? 0}/{lastRun.totalTokens}
+              {(lastRun.bonusScore ?? 0) > 0 ? ` (+${lastRun.bonusScore} puan)` : ''}
+            </span>
+          </div>
+        )}
+
+        {(lastRun.violationCount ?? 0) > 0 && (
+          <div
+            data-testid="penalty-summary-card"
+            className="mb-4 rounded-xl px-3.5 py-2.5 border border-rose-500/40 bg-rose-950/35 text-xs"
+          >
+            <div className="flex items-center justify-between font-bold text-rose-200 mb-1">
+              <span className="inline-flex items-center gap-1.5">
+                <AlertTriangle className="w-3.5 h-3.5 text-rose-400" />
+                <span>Trafik &amp; Sürüş Cezaları ({lastRun.violationCount})</span>
+              </span>
+              <span className="font-mono-num text-rose-300">
+                {lastRun.penaltyPoints ?? 0}/100 Puan
+              </span>
+            </div>
+            <div className="font-mono-num text-[11px] text-rose-200/90 flex items-center justify-between">
+              <span>Kesilen Skor: -{lastRun.penaltyScore ?? 0}</span>
+              {(lastRun.penaltyTimeSec ?? 0) > 0 && (
+                <span>Ek Süre Cezası: +{lastRun.penaltyTimeSec}sn</span>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Dynamic Difficulty Shift Notice */}
         {lastRun.difficultyShift !== 'steady' && (
@@ -213,15 +263,27 @@ export const GameModal: React.FC<GameModalProps> = ({
         {/* Primary CTA + Secondary Actions */}
         <div className="space-y-2.5">
           {isVictory ? (
-            <button
-              type="button"
-              data-start="true"
-              onClick={onNextLevel}
-              className="w-full py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold flex items-center justify-center gap-2 cursor-pointer"
-            >
-              <span>SONRAKİ SEVİYE ({lastRun.levelNumber + 1})</span>
-              <ArrowRight className="w-4 h-4" />
-            </button>
+            lastRun.isRealWorld && onPickNewStreet ? (
+              <button
+                type="button"
+                data-start="true"
+                onClick={onPickNewStreet}
+                className="w-full py-3.5 rounded-xl bg-cyan-400 hover:bg-cyan-300 text-slate-950 font-bold flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>YENİ GERÇEK SOKAK SEÇ</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            ) : (
+              <button
+                type="button"
+                data-start="true"
+                onClick={onNextLevel}
+                className="w-full py-3.5 rounded-xl bg-emerald-500 hover:bg-emerald-400 text-slate-950 font-bold flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <span>SONRAKİ SEVİYE ({lastRun.levelNumber + 1})</span>
+                <ArrowRight className="w-4 h-4" />
+              </button>
+            )
           ) : (
             <button
               type="button"
